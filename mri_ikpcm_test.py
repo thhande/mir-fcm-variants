@@ -18,6 +18,7 @@ from sklearn.metrics import confusion_matrix
 from validity import *
 from utility import *
 from algo.my_util import *
+from algo.IKPCM import *
 
 # ==============================
 # THAM SỐ
@@ -219,70 +220,11 @@ print(f"Số pixel đưa vào FCM: {cluster_data.shape[0]}")
 # =======================================
 
 #run fcm
-fcm_model = FCM(c  = cluster_num, m = 2, eps = 1e-5,max_iter=1000)#khởi tạo thuật toán
+fcm_model = IKPCM(c  = cluster_num, m = 2,sigma=5.0, eps = 1e-5,max_iter=1000)#khởi tạo thuật toán
 fv, fu, fl, fs = fcm_model.fit(cluster_data) # lưu kết quả chạy
 fcm_process_time = fcm_model.process_time#thời gian chạy của thuật toán
 
-#run ssfcm
-ssfcm_model = SSFCM(c = cluster_num, max_iter = 1000)
-ss_v,ss_u,ss_l,ss_i = ssfcm_model.fit(data = cluster_data,labels= init_semi_data_fixed(cluster_true_labels,SEMI_DATA_RATIO))#V,U,label, iterations
-ssfcm_precess_time = ssfcm_model.process_time
 
-
-#prepare the data for CFCM and SSCFCM
-# =======================================
-# CHUẨN BỊ DỮ LIỆU CFCM VÀ SSCFCM
-# =======================================
-
-unique_labels = np.unique(true_mask)
-label_to_index = {label: index for index, label in enumerate(unique_labels)}
-
-# Giữ nguyên biến này cho toàn bộ ảnh (nếu bạn có dùng ở các bước tái tạo ảnh)
-numeric_labels = np.array([label_to_index[label] for label in true_mask]) 
-
-# Tạo biến mới: MAPPING ĐÚNG với kích thước của cluster_data (160,249)
-numeric_labels_masked = np.array([label_to_index[label] for label in cluster_true_labels])
-
-n_samples = cluster_data.shape[0]
-indices = np.arange(n_samples)
-np.random.shuffle(indices) # Trộn index
-    
-split_indices = np.array_split(indices, 3) # Chia làm 3 phần
-    
-list_datas = [cluster_data[idx] for idx in split_indices]
-
-# SỬA LỖI 1: Sử dụng biến masked để chia nhãn chuẩn xác cho từng phần dữ liệu
-list_labels = [numeric_labels_masked[idx] for idx in split_indices] 
-
-
-# SỬA LỖI 2: Tính standard_centroid an toàn (Chống lỗi NaN)
-standard_centroid = np.zeros((cluster_num, cluster_data.shape[1]))
-
-for c in range(cluster_num):
-    mask_c = (numeric_labels_masked == c)
-    if np.any(mask_c): 
-        # Nếu nhãn c tồn tại trong ground truth -> tính trung bình bình thường
-        standard_centroid[c] = cluster_data[mask_c].mean(axis=0)
-    else:
-        # Nếu nhãn c KHÔNG tồn tại (do mask chỉ có 2 nhãn mà cluster_num = 6)
-        # -> Mượn tạm tâm của cụm tương ứng từ thuật toán FCM đã chạy thành công ở trên (biến fv)
-        standard_centroid[c] = fv[c]
-
-#run cfcm
-
-start_time = time.time()
-dcfcm = Dcfcm(n_clusters=cluster_num, m=2, beta=0.5, max_iter=MAX_ITER) 
-
-# 3. Truyền tâm chuẩn vào hàm fit
-results = dcfcm.fit(list_datas, standard_centroid=standard_centroid) 
-phase2_time = time.time() - start_time
-
-#run sscfcm
-n_start_time = time.time() 
-sscfcm = SSCFCM(n_clusters=cluster_num,max_iter=1000)
-sub_labels =[init_semi_data_fixed(labels, SEMI_DATA_RATIO) for labels in list_labels]
-sscfcm_steps = sscfcm.fit(sub_datasets=list_datas,sub_labels=sub_labels)
-ss_phase2_time = time.time()-n_start_time 
 
 
 pred_subset = np.argmax(fu, axis=1)#this part is for coloring the image, i skip it by now
@@ -368,7 +310,7 @@ def build_row(alg_name, X, U, V, true_labels, process_time, steps=0):
             f"{alg_name:<10}"
             f"{process_time:>10.3f}"
             f"{steps:>10}"
-            f"{0:>10}"#dunn(X, labels):>10.3f
+            f"{0:>10.3f}"#dunn(X, labels):>10.3f
             f"{davies_bouldin(X, labels):>10.3f}"
             f"{partition_coefficient(U):>10.3f}"
             f"{partition_entropy(U):>10.3f}"
@@ -383,6 +325,28 @@ def build_row(alg_name, X, U, V, true_labels, process_time, steps=0):
 def build_row(alg_name, X, U, V, true_labels, process_time, steps=0):
         # Lấy nhãn phân cụm thô (từ 0 đến 5)
         labels = extract_labels(U)
+        
+        # --- NEW: STRATIFIED SUBSAMPLING ---
+        # Guarantees no cluster is accidentally left empty in the sample
+        sample_size = 5000
+        unique_classes = np.unique(labels)
+        samples_per_class = sample_size // len(unique_classes)
+        
+        idx = []
+        for c in unique_classes:
+            c_idx = np.where(labels == c)[0]
+            if len(c_idx) > 0:
+                # Take up to 'samples_per_class', or all of them if the cluster is tiny
+                chosen = np.random.choice(c_idx, min(len(c_idx), samples_per_class), replace=False)
+                idx.extend(chosen)
+                
+        idx = np.array(idx)
+        X_sub = X[idx]
+        labels_sub = labels[idx]
+        # ------------------------------------
+
+        # 1. GOM 6 CỤM THÀNH 2 CỤM...
+        best_f1 = 0
         
         # ==========================================
         # 1. GOM 6 CỤM THÀNH 2 CỤM ĐỂ TÍNH F1 VÀ ACC
@@ -414,7 +378,7 @@ def build_row(alg_name, X, U, V, true_labels, process_time, steps=0):
             f"{alg_name:<10}"
             f"{process_time:>10.3f}"
             f"{steps:>10}"
-            f"{dunn(X, labels):>10.3f}" # dunn(X, labels):>10.3f
+            f"{0:>10.3f}" # dunn(X, labels):>10.3f
             f"{davies_bouldin(X, labels):>10.3f}"
             f"{partition_coefficient(U):>10.3f}"
             f"{partition_entropy(U):>10.3f}"
@@ -425,6 +389,69 @@ def build_row(alg_name, X, U, V, true_labels, process_time, steps=0):
             f"{f1_score(true_labels, binary_pred_labels, average='weighted'):>10.3f}"
             f"{accuracy_score(true_labels, binary_pred_labels):>10.3f}"
         )
+
+def build_row(alg_name, X, U, V, true_labels, process_time, steps=0):
+    # Lấy nhãn phân cụm thô (từ 0 đến c-1)
+    labels = extract_labels(U)
+    
+    # ==========================================
+    # 0. STRATIFIED SUBSAMPLING (Chống tràn RAM & Empty Cluster)
+    # ==========================================
+    sample_size = 5000
+    unique_classes = np.unique(labels)
+    
+    # Chia đều số lượng sample cho các cụm đang thực sự tồn tại
+    samples_per_class = sample_size // len(unique_classes)
+    
+    idx = []
+    np.random.seed(42) # Cố định seed cho kết quả ổn định
+    for c in unique_classes:
+        c_idx = np.where(labels == c)[0]
+        if len(c_idx) > 0:
+            # Lấy ngẫu nhiên tối đa samples_per_class, hoặc lấy hết nếu cụm quá nhỏ
+            chosen = np.random.choice(c_idx, min(len(c_idx), samples_per_class), replace=False)
+            idx.extend(chosen)
+            
+    idx = np.array(idx)
+    X_sub = X[idx]
+    labels_sub = labels[idx]
+
+    # ==========================================
+    # 1. GOM CỤM ĐỂ TÍNH F1 VÀ ACC (Tumor = 1, Còn lại = 0)
+    # ==========================================
+    best_f1 = 0
+    tumor_cluster_idx = 0
+    
+    for c in range(U.shape[1]):
+        temp_pred = (labels == c).astype(int)
+        # Thêm zero_division=0 để tránh warning nếu cụm trống
+        temp_f1 = f1_score(true_labels, temp_pred, zero_division=0)
+        
+        if temp_f1 > best_f1:
+            best_f1 = temp_f1
+            tumor_cluster_idx = c
+            
+    # Ép cụm khối u thành 1, nền/não thành 0
+    binary_pred_labels = (labels == tumor_cluster_idx).astype(int)
+
+    # ==========================================
+    # 2. XUẤT CHỈ SỐ
+    # ==========================================
+    return (
+        f"{alg_name:<10}"
+        f"{process_time:>10.3f}"
+        f"{steps:>10}"
+        f"{dunn(X_sub, labels_sub):>10.3f}"  # Dùng mảng đã thu gọn
+        f"{davies_bouldin(X, labels):>10.3f}"
+        f"{partition_coefficient(U):>10.3f}"
+        f"{partition_entropy(U):>10.3f}"
+        f"{Xie_Benie(X, V, U):>10.3f}"
+        f"{classification_entropy(U):>10.3f}"
+        f"{silhouette(X_sub, labels_sub):>10.3f}" # Dùng mảng đã thu gọn
+        f"{hypervolume(U):>10.3f}"
+        f"{f1_score(true_labels, binary_pred_labels, average='weighted', zero_division=0):>10.3f}"
+        f"{accuracy_score(true_labels, binary_pred_labels):>10.3f}"
+    )
 
 #print titles
 print(
@@ -444,38 +471,7 @@ print(
 
 )
 
-        
-for i in range(len(list_datas)):
-        X_site = list_datas[i]
-        y_site = list_labels[i]
-        # ===== FCM =====
-        # lấy U toàn cục nhưng chỉ tính metric trên site
-        U_fcm_site = fu[split_indices[i]]
-        V_fcm = fv
-        print(build_row("FCM", X_site, U_fcm_site, V_fcm, y_site, fcm_model.process_time,steps = fs))
-        # ===== SSFCM =====
-        U_ss_site = ss_u[split_indices[i]]
-        V_ss = ss_v
-        print(build_row("SSFCM", X_site, U_ss_site, V_ss, y_site, ssfcm_model.process_time,steps = ss_i))
-        # ===== CFCM =====
-        site_cf = dcfcm.data_sites[i]
-        print(build_row("CFCM",
-                        site_cf.local_data,
-                        site_cf.U,
-                        site_cf.V,
-                        y_site,
-                       phase2_time,
-                       steps = sum(dcfcm.steps)))
-        # ===== SSCFCM =====
-        site_sscf = sscfcm.data_sites[i]
-        print(build_row("SSCFCM",
-                        site_sscf.local_data,
-                        site_sscf.U,
-                        site_sscf.V,
-                        y_site,
-                        ss_phase2_time,
-                        steps = sscfcm_steps))
-        print('________________________________________________________________________________________________________________________')
+print(build_row("FCM", cluster_data, fu, fv, cluster_true_labels, fcm_model.process_time,steps = fs))
 
 # =======================================
 # 11. ĐỒNG BỘ MÀU VÀ IN 4 THUẬT TOÁN 1 HÀNG NGANG
@@ -559,20 +555,9 @@ def get_synced_rgb_image(U_matrix, V_matrix, valid_mask, flat_shape, H, W, true_
 U_FCM = fu 
 V_FCM = fv
 
-U_SSFCM = ss_u 
-V_SSFCM = ss_v
-
-U_CFCM = unshuffle_U(dcfcm.data_sites, n_samples, cluster_num, split_indices)
-V_CFCM = compute_global_V(U_CFCM, cluster_data)
-
-U_SSCFCM = unshuffle_U(sscfcm.data_sites, n_samples, cluster_num, split_indices)
-V_SSCFCM = compute_global_V(U_SSCFCM, cluster_data)
 
 algorithms = {
     "FCM": (U_FCM, V_FCM),
-    "SSFCM": (U_SSFCM, V_SSFCM),
-    "CFCM": (U_CFCM, V_CFCM),
-    "SSCFCM": (U_SSCFCM, V_SSCFCM)
 }
 
 # --- VẼ LÊN 1 HÀNG NGANG DUY NHẤT ---
@@ -592,72 +577,72 @@ plt.tight_layout()
 plt.show()
 
 
-# =======================================
-# 12. VISUALIZE VÀ KIỂM TRA GROUND TRUTH & SEMI-SUPERVISED LABLES
-# =======================================
+# # =======================================
+# # 12. VISUALIZE VÀ KIỂM TRA GROUND TRUTH & SEMI-SUPERVISED LABLES
+# # =======================================
 
-def visualize_ground_truth_and_semi(true_mask, H, W, ratio):
-    print("-" * 100)
-    print("Đang tạo ảnh visualize kiểm tra nhãn và màu...")
+# def visualize_ground_truth_and_semi(true_mask, H, W, ratio):
+#     print("-" * 100)
+#     print("Đang tạo ảnh visualize kiểm tra nhãn và màu...")
     
-    # 1. Đưa true_mask về lại dạng 2D
-    true_mask_2d = true_mask.reshape(H, W)
+#     # 1. Đưa true_mask về lại dạng 2D
+#     true_mask_2d = true_mask.reshape(H, W)
     
-    # 2. Sinh nhãn bán giám sát trên toàn bộ ảnh (để test)
-    # init_semi_data_fixed sẽ trả về mảng 1D có kích thước bằng true_mask
-    semi_labels_full = init_semi_data_fixed(true_mask, ratio)
-    print("Unique:", np.unique(semi_labels_full))
-    print("Count:", np.unique(semi_labels_full, return_counts=True))
-    print("Total pixels:", len(semi_labels_full))
-    print("Labeled pixels:", np.sum(semi_labels_full != -1))
+#     # 2. Sinh nhãn bán giám sát trên toàn bộ ảnh (để test)
+#     # init_semi_data_fixed sẽ trả về mảng 1D có kích thước bằng true_mask
+#     semi_labels_full = init_semi_data_fixed(true_mask, ratio)
+#     print("Unique:", np.unique(semi_labels_full))
+#     print("Count:", np.unique(semi_labels_full, return_counts=True))
+#     print("Total pixels:", len(semi_labels_full))
+#     print("Labeled pixels:", np.sum(semi_labels_full != -1))
 
-    semi_labels_2d = semi_labels_full.reshape(H, W)
+#     semi_labels_2d = semi_labels_full.reshape(H, W)
     
-    # 3. Chuẩn bị bảng màu kiểm tra
-    # Lấy đúng mã màu Đỏ của Tumor (nhãn số 6) từ color_map của bạn
-    tumor_color = [220, 30, 30] 
+#     # 3. Chuẩn bị bảng màu kiểm tra
+#     # Lấy đúng mã màu Đỏ của Tumor (nhãn số 6) từ color_map của bạn
+#     tumor_color = [220, 30, 30] 
     
-    # Khởi tạo ảnh RGB nền đen
-    gt_rgb = np.zeros((H, W, 3), dtype=np.uint8)
-    semi_rgb = np.zeros((H, W, 3), dtype=np.uint8)
+#     # Khởi tạo ảnh RGB nền đen
+#     gt_rgb = np.zeros((H, W, 3), dtype=np.uint8)
+#     semi_rgb = np.zeros((H, W, 3), dtype=np.uint8)
     
-    # Xác định giá trị thực của Tumor trong file .mat (thường là 1)
-    tumor_index = 1 if len(np.unique(true_mask)) > 1 else 0
+#     # Xác định giá trị thực của Tumor trong file .mat (thường là 1)
+#     tumor_index = 1 if len(np.unique(true_mask)) > 1 else 0
 
-    # --- TÔ MÀU GROUND TRUTH ---
-    # Chỉ tô màu khối u thành màu đỏ, còn lại để đen
-    gt_rgb[true_mask_2d == tumor_index] = tumor_color
+#     # --- TÔ MÀU GROUND TRUTH ---
+#     # Chỉ tô màu khối u thành màu đỏ, còn lại để đen
+#     gt_rgb[true_mask_2d == tumor_index] = tumor_color
 
-    # --- TÔ MÀU SEMI-SUPERVISED ---
-    # -1: Unlabeled -> Tô màu xám đậm [50, 50, 50] để thấy rõ phần chưa gán nhãn
-    # 0: Background đã gán nhãn -> Đen [0, 0, 0]
-    # tumor_index: Tumor đã gán nhãn -> Đỏ giống Ground Truth
-    # semi_rgb[semi_labels_2d == -1] = [50, 50, 50]
-    # semi_rgb[semi_labels_2d == 1] = [0, 0, 0]
-    # semi_rgb[semi_labels_2d == tumor_index] = tumor_color
+#     # --- TÔ MÀU SEMI-SUPERVISED ---
+#     # -1: Unlabeled -> Tô màu xám đậm [50, 50, 50] để thấy rõ phần chưa gán nhãn
+#     # 0: Background đã gán nhãn -> Đen [0, 0, 0]
+#     # tumor_index: Tumor đã gán nhãn -> Đỏ giống Ground Truth
+#     # semi_rgb[semi_labels_2d == -1] = [50, 50, 50]
+#     # semi_rgb[semi_labels_2d == 1] = [0, 0, 0]
+#     # semi_rgb[semi_labels_2d == tumor_index] = tumor_color
 
-    # unlabeled
-    semi_rgb[semi_labels_2d == -1] = [50, 50, 50]
+#     # unlabeled
+#     semi_rgb[semi_labels_2d == -1] = [50, 50, 50]
 
-    # background
-    semi_rgb[semi_labels_2d == 0] = [0, 0, 0]
+#     # background
+#     semi_rgb[semi_labels_2d == 0] = [0, 0, 0]
 
-    # tumor
-    semi_rgb[semi_labels_2d == tumor_index] = tumor_color
+#     # tumor
+#     semi_rgb[semi_labels_2d == tumor_index] = tumor_color
     
-    # 4. Vẽ biểu đồ
-    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+#     # 4. Vẽ biểu đồ
+#     fig, axes = plt.subplots(1, 2, figsize=(12, 6))
     
-    axes[0].imshow(gt_rgb)
-    axes[0].set_title('Full Label (Ground Truth)\nTumor: Red [220, 30, 30]', fontsize=14, fontweight='bold')
-    axes[0].axis('off')
+#     axes[0].imshow(gt_rgb)
+#     axes[0].set_title('Full Label (Ground Truth)\nTumor: Red [220, 30, 30]', fontsize=14, fontweight='bold')
+#     axes[0].axis('off')
     
-    axes[1].imshow(semi_rgb)
-    axes[1].set_title(f'Semi Labels (Ratio={ratio})\nRed=Tumor, Gray=Unlabeled', fontsize=14, fontweight='bold')
-    axes[1].axis('off')
+#     axes[1].imshow(semi_rgb)
+#     axes[1].set_title(f'Semi Labels (Ratio={ratio})\nRed=Tumor, Gray=Unlabeled', fontsize=14, fontweight='bold')
+#     axes[1].axis('off')
     
-    plt.tight_layout()
-    plt.show()
+#     plt.tight_layout()
+#     plt.show()
 
-# Gọi hàm kiểm tra
-visualize_ground_truth_and_semi(true_mask, H, W, SEMI_DATA_RATIO)
+# # Gọi hàm kiểm tra
+# visualize_ground_truth_and_semi(true_mask, H, W, SEMI_DATA_RATIO)
