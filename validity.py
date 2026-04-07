@@ -2,6 +2,8 @@
 import numpy as np
 import math
 from utility import norm_distances, extract_labels, division_by_zero
+import numpy as np
+from scipy.spatial.distance import pdist, cdist
 
 def align_labels(y_true, y_pred):
     """
@@ -67,6 +69,57 @@ def dunn(data: np.ndarray, labels: np.ndarray) -> float:
     if max_cluster_diameter == 0:
         return np.inf
     return min_cluster_distance / max_cluster_diameter
+
+def dunn(X: np.ndarray, labels: np.ndarray) -> float:
+    """
+    Dunn Index = min(inter-cluster distance) / max(intra-cluster diameter).
+    
+    - Inter-cluster distance: khoảng cách nhỏ nhất giữa 2 điểm thuộc 2 cluster khác nhau
+    - Intra-cluster diameter: khoảng cách lớn nhất giữa 2 điểm trong cùng 1 cluster
+    
+    Dùng pdist (O(n²) nhưng không tạo tensor 3D) → RAM-friendly.
+    
+    Parameters:
+        X: (n, p) — dữ liệu
+        labels: (n,) — nhãn cluster
+        
+    Returns:
+        Dunn Index (float), càng lớn càng tốt
+    """
+    unique_labels = np.unique(labels)
+    c = len(unique_labels)
+ 
+    if c < 2:
+        return 0.0
+ 
+    # Tách data theo cluster
+    clusters = [X[labels == label] for label in unique_labels]
+ 
+    # Max intra-cluster diameter (khoảng cách xa nhất trong mỗi cluster)
+    max_intra = 0.0
+    for cluster in clusters:
+        if len(cluster) < 2:
+            continue
+        # pdist trả về vector condensed → chỉ cần max
+        intra_dists = pdist(cluster, metric='euclidean')
+        d = np.max(intra_dists)
+        if d > max_intra:
+            max_intra = d
+ 
+    if max_intra == 0.0:
+        return 0.0
+ 
+    # Min inter-cluster distance (khoảng cách gần nhất giữa 2 cluster)
+    min_inter = np.inf
+    for i in range(c):
+        for j in range(i + 1, c):
+            # cdist: (n_i, n_j) — không tạo tensor 3D
+            inter_dists = cdist(clusters[i], clusters[j], metric='euclidean')
+            d = np.min(inter_dists)
+            if d < min_inter:
+                min_inter = d
+ 
+    return min_inter / max_intra
     # =============================================
     # from scipy.spatial.distance import cdist, pdist, squareform
     # distances = pdist(data)

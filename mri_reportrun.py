@@ -346,14 +346,6 @@ y_pred_binary = (label_image_2d == target_label).astype(int)
 # 10. TÔ MÀU CỐ ĐỊNH
 # =======================================
 
-# color_map = {
-#     1: [40, 80, 180],     # Deep blue (CSF)
-#     2: [180, 180, 180],   # Light gray (GM)
-#     3: [220, 220, 220],   # Near white (WM)
-#     4: [150, 200, 150],   # Soft green (tissue)
-#     5: [200, 200, 120],   # Pale yellow
-#     6: [220, 30, 30],     # Strong red (Tumor)
-# }
 color_map = {
     0: [180, 180, 180],       # đen → nền
     1: [220, 30, 30],     # đỏ → tumor

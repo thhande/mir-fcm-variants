@@ -108,8 +108,8 @@ if  __name__ == "__main__":
             f"{wdvl(classification_entropy(U)):>10}"
             f"{wdvl(silhouette(X, labels)):>10}"
             f"{wdvl(hypervolume(U)):>10}"
-            f"{wdvl(f1_score(true_labels, labels,'weighted')):>10}"
-            f"{wdvl(accuracy_score(true_labels, labels)):>10}"
+            f"{wdvl(f1_score(true_labels, aligned_labels,'weighted')):>10}"
+            f"{wdvl(accuracy_score(true_labels, aligned_labels)):>10}"
         )
         
     for i in range(len(list_datas)):

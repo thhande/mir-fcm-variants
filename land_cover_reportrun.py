@@ -37,7 +37,7 @@ if __name__ == "__main__":
     # Lấy file ảnh đầu tiên để xử lý
     all_images = [f for f in os.listdir(img_dir) if f.lower().endswith('.tif')]
     random_index = random.randint(0,len(all_images)-1)#get a random image for testing
-    target_name = all_images[10] 
+    target_name = all_images[15] 
     
     image_path = [os.path.join(img_dir, target_name)]
     mask_path = os.path.join(mask_dir, target_name)
