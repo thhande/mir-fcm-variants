@@ -5,10 +5,13 @@ import numpy as np
 from algo.newdataloader import *
 from algo.MYFCM import *
 import time
+from sklearn.preprocessing import StandardScaler
 
 if  __name__ == "__main__":
-    data,class_data = load_data_with_labels('dataset/Iris/data.csv','class') 
-    C = 3
+    data,class_data = load_data_with_labels('dataset/Drybean/data.csv','Class')
+    # scaler = StandardScaler()
+    # data = scaler.fit_transform(data) 
+    C = 7
     SEMI_DATA_RATIO = 0.2
     unique_labels = np.unique(class_data)
     label_to_index = {label: index for index, label in enumerate(unique_labels)}
@@ -47,7 +50,7 @@ if  __name__ == "__main__":
     fcm = FCM(c = C)
     fv,fu,fl,fs = fcm.fit(data=data)
 
-    pso_fcm  = PSO_V_FCM(c=C,swarm_size=30,max_iter = 1000)
+    pso_fcm  = PSO_V_FCM(c=C,swarm_size=30,patience= 30)
     pv,pu,pl,ps = pso_fcm.fit(data)
     
     from scipy.optimize import linear_sum_assignment
