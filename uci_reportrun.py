@@ -12,8 +12,8 @@ from sklearn.preprocessing import StandardScaler
 
 
 if  __name__ == "__main__":
-    data,class_data = load_data_with_labels('dataset/DryBean/data.csv','Class') 
-    C = 7
+    data,class_data = load_data_with_labels('dataset/Iris/data.csv','class') 
+    C = 3
     SEMI_DATA_RATIO = 0.2
     unique_labels = np.unique(class_data)
     label_to_index = {label: index for index, label in enumerate(unique_labels)}

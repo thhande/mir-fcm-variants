@@ -19,6 +19,7 @@ from validity import *
 from utility import *
 from algo.my_util import *
 from algo.PSO_FCM import *
+from algo.SSPSO import *
 
 # ==============================
 # THAM SỐ
@@ -224,18 +225,27 @@ print(f"Số pixel đưa vào FCM: {cluster_data.shape[0]}")
 # =======================================
 # 6. CHẠY FCM
 # =======================================
+semi_labels = init_semi_data_fixed(cluster_true_labels,ratio=SEMI_DATA_RATIO)
 
 #run fcm
 fcm_model = FCM(c  = cluster_num, m = 2, eps = 1e-5,max_iter=1000)#khởi tạo thuật toán
 fv, fu, fl, fs = fcm_model.fit(cluster_data) # lưu kết quả chạy
 fcm_process_time = fcm_model.process_time#thời gian chạy của thuật toán
+
 pso_fcm = PSO_V_FCM(c = cluster_num)
 pv,pu,pl,ps = pso_fcm.fit(cluster_data)
 
-# #run ssfcm
-# ssfcm_model = SSFCM(c = cluster_num, max_iter = 1000)
-# ss_v,ss_u,ss_l,ss_i = ssfcm_model.fit(data = cluster_data,labels= init_semi_data_fixed(cluster_true_labels,SEMI_DATA_RATIO))#V,U,label, iterations
-# ssfcm_precess_time = ssfcm_model.process_time
+sspso =  pso_fcm =SSPSO_dlsBBPSO(
+        c=cluster_num,
+        m=2,
+        max_iter=20,          # paper khuyến nghị max_iter=20
+        swarm_size=20,        # paper khuyến nghị swarm_size=20
+        semi_mode='ssFCM',    # hoặc 'IS' nếu muốn IS-dlsBBPSO
+        seed=42
+    )
+psv,psu,psl,pss = sspso.fit(data=cluster_data,labels=semi_labels)
+
+
 
 
 
@@ -386,5 +396,13 @@ print(build_row("PSO_FCM",
                         numeric_labels[valid_mask],
                         pso_fcm.process_time,
                         steps = ps))
+print(build_row("SSPSO",
+                        cluster_data,
+                        psu,
+                        psv,
+                        numeric_labels[valid_mask],
+                        sspso.process_time,
+                        steps = pss))
+
 
         
