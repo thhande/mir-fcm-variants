@@ -26,6 +26,11 @@ C = 5 #số cụm
 ROUND_FLOAT = 3 # số làm tròn
 
 if __name__ == "__main__":
+    URBAN = 39
+    FOREST = 15
+    WATER = 10
+
+
     # 1. Cấu hình đường dẫn dữ liệu LandCover.ai
     os.environ["KAGGLEHUB_CACHE"] = "D:/Kaggle_Data"    
     import kagglehub
@@ -61,7 +66,7 @@ if __name__ == "__main__":
 
     fcm = FCM(c=C, m=2)
     fv, fu, fl, fs = fcm.fit(data=data) 
-    pso_fcm =SSPSO_dlsBBPSO(
+    sspso =SSPSO_dlsBBPSO(
         c=C,
         m=2,
         max_iter=20,          # paper khuyến nghị max_iter=20
@@ -69,10 +74,15 @@ if __name__ == "__main__":
         semi_mode='ssFCM',    # hoặc 'IS' nếu muốn IS-dlsBBPSO
         seed=42
     )
-    pv,pu,pl,ps = pso_fcm.fit(data=data,labels=semi_labels)
+    psv,psu,psl,pss = sspso.fit(data=data,labels=semi_labels)
   
-    # ssfcm = SSFCM(c = C)
-    # ss_v,ss_u,ss_l,ss_s = ssfcm.fit(data=data,labels=semi_labels) 
+    ssfcm = SSFCM(c = C)
+    ss_v,ss_u,ss_l,ss_s = ssfcm.fit(data=data,labels=semi_labels) 
+
+    pso_fcm  = PSO_V_FCM(c=C,swarm_size=30,patience= 30)
+    pv,pu,pl,ps = pso_fcm.fit(data=data)
+
+    
 
     # Chuẩn bị dữ liệu cho mô hình phân cụm cộng tác (CFCM)
 
@@ -114,6 +124,7 @@ if __name__ == "__main__":
             f"{hypervolume(U):>10.3f}"
             f"{f1_score(true_labels, aligned_labels, average='weighted'):>10.3f}"
             f"{accuracy_score(true_labels, aligned_labels):>10.3f}"
+            f"{kappa_score(true_labels,aligned_labels):>10.3f}"
         )
     print(
     f"{'Alg':<10}"
@@ -127,10 +138,32 @@ if __name__ == "__main__":
     f'{'FHV+':>10}'
     f'{'F1+':>10}'
     f'{'AC+':>10}'
+    f'{'KA':>10}'
+    
 )
-    print(build_row(alg_name='FCM',X= data,V = fv,U = fu,process_time=fcm.process_time,true_labels=numeric_labels,steps= fs))
-    print(build_row(alg_name='PSO_V_FCM',X=data,V = pv,U =pu,true_labels=numeric_labels,process_time=pso_fcm.process_time,steps=ps))
+    for _ in range(1):
+        fcm = FCM(c=C, m=2)
+        fv, fu, fl, fs = fcm.fit(data=data) 
+        sspso =SSPSO_dlsBBPSO(
+            c=C,
+            m=2,
+            max_iter=20,          # paper khuyến nghị max_iter=20
+            swarm_size=20,        # paper khuyến nghị swarm_size=20
+            semi_mode='ssFCM',    # hoặc 'IS' nếu muốn IS-dlsBBPSO
+            seed=42
+        )
+        psv,psu,psl,pss = sspso.fit(data=data,labels=semi_labels)
+    
+        ssfcm = SSFCM(c = C)
+        ss_v,ss_u,ss_l,ss_s = ssfcm.fit(data=data,labels=semi_labels) 
 
+        pso_fcm  = PSO_V_FCM(c=C,swarm_size=30,patience= 30)
+        pv,pu,pl,ps = pso_fcm.fit(data=data)
+        print(build_row(alg_name='FCM',X= data,V = fv,U = fu,process_time=fcm.process_time,true_labels=numeric_labels,steps= fs))
+        print(build_row(alg_name='PSOFCM',X= data,V = pv,U = pu,process_time=pso_fcm.process_time,true_labels=numeric_labels,steps= ps))
+        print(build_row(alg_name='SSPSO',X=data,V = psv,U =psu,true_labels=numeric_labels,process_time=sspso.process_time,steps=pss))
+        print(build_row(alg_name='SSFCM',X = data,V = ss_v,U = ss_u,true_labels=numeric_labels,process_time=ssfcm.process_time,steps = ss_s))
+        print('_________________________________________________________________________________________________________')
     import matplotlib.pyplot as plt
     import matplotlib.patches as mpatches
     from matplotlib.colors import ListedColormap
@@ -197,6 +230,77 @@ if __name__ == "__main__":
         plt.tight_layout()
         print("Đang hiển thị kết quả trực quan...")
         plt.show()
+    def visualize_clustering_results(img_rgb, ground_truth, results, H, W, class_names, color_map_rgb):
+        """
+        Hàng 1: Ảnh gốc, Nhãn gốc, 3 kênh màu (R, G, B)
+        Hàng 2: Kết quả của 4 thuật toán + Chú giải (Legend)
+        """
+        # 1. Chuẩn bị Colormap
+        color_map_normalized = np.array(color_map_rgb) / 255.0
+        custom_cmap = ListedColormap(color_map_normalized)
+        vmin, vmax = 0, len(class_names) - 1
+
+        # 2. Xử lý ảnh và tách kênh màu
+        img_display = img_rgb.copy()
+        if img_display.max() > 1.0:
+            img_display = img_display / 255.0
+        
+        # Tách 3 kênh màu
+        R_channel = img_display[:, :, 0]
+        G_channel = img_display[:, :, 1]
+        B_channel = img_display[:, :, 2]
+
+        # 3. Khởi tạo Grid: 2 hàng, 5 cột
+        fig, axes = plt.subplots(2, 5, figsize=(25, 10))
+        
+        # --- HÀNG 1: Dữ liệu đầu vào ---
+        # Ô 0: Ảnh RGB
+        axes[0, 0].imshow(img_display)
+        axes[0, 0].set_title("Ảnh RGB Gốc", fontsize=14, fontweight='bold')
+        
+        # Ô 1: Ground Truth
+        axes[0, 1].imshow(ground_truth.reshape(H, W), cmap=custom_cmap, vmin=vmin, vmax=vmax)
+        axes[0, 1].set_title("Nhãn Gốc (GT)", fontsize=14, color='darkgreen', fontweight='bold')
+        
+        # Ô 2, 3, 4: Các kênh màu đơn sắc
+        axes[0, 2].imshow(R_channel, cmap='Reds')
+        axes[0, 2].set_title("Kênh màu Đỏ (Red)", fontsize=12)
+        
+        axes[0, 3].imshow(G_channel, cmap='Greens')
+        axes[0, 3].set_title("Kênh màu Lục (Green)", fontsize=12)
+        
+        axes[0, 4].imshow(B_channel, cmap='Blues')
+        axes[0, 4].set_title("Kênh màu Lam (Blue)", fontsize=12)
+
+        # --- HÀNG 2: Kết quả thuật toán ---
+        # Duyệt qua 4 kết quả đầu tiên trong list 'results'
+        for i in range(4):
+            if i < len(results):
+                alg_name, U = results[i]
+                labels = np.argmax(U, axis=1)
+                aligned_labels = align_labels(ground_truth, labels).reshape(H, W)
+                
+                axes[1, i].imshow(aligned_labels, cmap=custom_cmap, vmin=vmin, vmax=vmax)
+                axes[1, i].set_title(f"Kết quả {alg_name}", fontsize=14, fontweight='bold')
+            else:
+                axes[1, i].axis('off') # Trường hợp truyền vào ít hơn 4 thuật toán
+
+        # Ô cuối cùng (1, 4): Hiển thị Legend
+        axes[1, 4].axis('off')
+        legend_patches = [mpatches.Patch(color=color_map_normalized[i], label=f"{i}: {class_names[i]}") 
+                        for i in range(len(class_names))]
+        axes[1, 4].legend(handles=legend_patches, loc='center', fontsize=12, 
+                        title="Lớp đối tượng", frameon=True, shadow=True)
+
+        # Tắt trục tọa độ cho tất cả các ô
+        for row in axes:
+            for ax in row:
+                ax.set_xticks([])
+                ax.set_yticks([])
+
+        plt.tight_layout()
+        print("Đang hiển thị so sánh chi tiết (2 hàng x 5 cột)...")
+        plt.show()
     # =========================================================================
     # BƯỚC RECONSTRUCT VÀ VẼ ẢNH HIỂN THỊ TRỰC QUAN
     # =========================================================================
@@ -226,7 +330,9 @@ if __name__ == "__main__":
     # Gom kết quả vào một danh sách để truyền vào hàm
     clustering_results = [
             ("FCM", fu),
-            ("SSPSO_dlsBBPSO", pu)
+            ('SSFCM',ss_u),
+            ('PSO_FCM',pu),
+            ("SSPSO", psu), 
             # Bạn có thể thêm các thuật toán khác vào đây: ("SSFCM", ss_u), v.v.
         ]
 
