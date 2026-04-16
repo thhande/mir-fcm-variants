@@ -19,6 +19,7 @@ from validity import *
 from utility import *
 from algo.my_util import *
 from algo.PSO_FCM import *
+from algo.SSPSO import *
 
 # ==============================
 # THAM SỐ
@@ -27,7 +28,7 @@ from algo.PSO_FCM import *
 ROUND_FLOAT = 4
 SPLIT = '\t'
 SEMI_DATA_RATIO = 0.3
-file_path = 'mri_data/1159.mat'
+file_path = 'mri_data/2387.mat'
 cluster_num = 6
 MAX_ITER =1000
 
@@ -224,18 +225,30 @@ print(f"Số pixel đưa vào FCM: {cluster_data.shape[0]}")
 # =======================================
 # 6. CHẠY FCM
 # =======================================
+semi_labels = init_semi_data_fixed(cluster_true_labels,ratio=SEMI_DATA_RATIO)
 
 #run fcm
 fcm_model = FCM(c  = cluster_num, m = 2, eps = 1e-5,max_iter=1000)#khởi tạo thuật toán
 fv, fu, fl, fs = fcm_model.fit(cluster_data) # lưu kết quả chạy
 fcm_process_time = fcm_model.process_time#thời gian chạy của thuật toán
+
 pso_fcm = PSO_V_FCM(c = cluster_num)
 pv,pu,pl,ps = pso_fcm.fit(cluster_data)
 
-# #run ssfcm
-# ssfcm_model = SSFCM(c = cluster_num, max_iter = 1000)
-# ss_v,ss_u,ss_l,ss_i = ssfcm_model.fit(data = cluster_data,labels= init_semi_data_fixed(cluster_true_labels,SEMI_DATA_RATIO))#V,U,label, iterations
-# ssfcm_precess_time = ssfcm_model.process_time
+sspso =  pso_fcm =SSPSO_dlsBBPSO(
+        c=cluster_num,
+        m=2,
+        max_iter=20,          # paper khuyến nghị max_iter=20
+        swarm_size=20,        # paper khuyến nghị swarm_size=20
+        semi_mode='ssFCM',    # hoặc 'IS' nếu muốn IS-dlsBBPSO
+        seed=42
+    )
+psv,psu,psl,pss = sspso.fit(data=cluster_data,labels=semi_labels)
+
+ssfcm = SSFCM(c = cluster_num)
+sv,su,sl,ss = ssfcm.fit(cluster_data,labels = semi_labels)
+
+
 
 
 
@@ -301,9 +314,13 @@ y_pred_binary = (label_image_2d == target_label).astype(int)
 # =======================================
 
 color_map = {
-    0: [180, 180, 180],       # đen → nền
-    1: [220, 30, 30],     # đỏ → tumor
-}
+        1: [40, 80, 180],     # Deep blue (CSF)
+        2: [180, 180, 180],   # Light gray (GM)
+        3: [220, 220, 220],   # Near white (WM)
+        4: [150, 200, 150],   # Soft green (tissue)
+        5: [200, 200, 120],   # Pale yellow
+        6: [220, 30, 30],     # Strong red (Tumor)
+    }
 
 seg_image = np.zeros((H, W, 3), dtype=np.uint8)
 
@@ -359,6 +376,8 @@ def build_row(alg_name, X, U, V, true_labels, process_time, steps=0):
             f"{hypervolume(U):>10.3f}"
             f"{f1_score(true_labels, binary_pred_labels, average='weighted'):>10.3f}"
             f"{accuracy_score(true_labels, binary_pred_labels):>10.3f}"
+            f"{dice_score(true_labels, binary_pred_labels):>10.3f}"
+            f"{jaccard_score(true_labels, binary_pred_labels):>10.3f}"
         )
 
 #print titles
@@ -376,9 +395,24 @@ print(
     f'{'FHV+':>10}'
     f'{'F1+':>10}'
     f'{'AC+':>10}'
-
+    f'{'DIC':>10}'
+    f'{'JAC':>10}'
 )
 
+print(build_row("FCM",
+                        cluster_data,
+                        fu,
+                        fv,
+                        numeric_labels[valid_mask],
+                        fcm_model.process_time,
+                        steps = fs))
+print(build_row("SSFCM",
+                        cluster_data,
+                        su,
+                        sv,
+                        numeric_labels[valid_mask],
+                        ssfcm.process_time,
+                        steps = ss))
 print(build_row("PSO_FCM",
                         cluster_data,
                         pu,
@@ -386,5 +420,96 @@ print(build_row("PSO_FCM",
                         numeric_labels[valid_mask],
                         pso_fcm.process_time,
                         steps = ps))
+print(build_row("SSPSO",
+                        cluster_data,
+                        psu,
+                        psv,
+                        numeric_labels[valid_mask],
+                        sspso.process_time,
+                        steps = pss))
+print('_______________________________________________________')
 
+
+# =======================================
+# 11. HÀM HỖ TRỢ HIỂN THỊ
+# =======================================
+
+def get_colored_image(U, V, valid_mask, H, W, true_mask_flat, cluster_num, color_map):
+    """
+    Xử lý hậu kỳ: Sắp xếp cụm, lọc nhiễu, xác định Tumor và gán màu.
+    """
+    # 1. Lấy nhãn thô
+    pred_subset = np.argmax(U, axis=1)
+    
+    # 2. Sắp xếp thứ tự cụm theo cường độ tâm cụm (giảm hoán vị)
+    sorted_indices = np.argsort(V.flatten())
+    new_labels = np.zeros_like(pred_subset)
+    for new_idx, old_idx in enumerate(sorted_indices):
+        new_labels[pred_subset == old_idx] = new_idx + 1
+    
+    # 3. Tái tạo ảnh 2D
+    full_labels = np.zeros(H * W, dtype=int)
+    full_labels[valid_mask] = new_labels
+    label_image_2d = full_labels.reshape(H, W)
+    
+    # 4. Lọc nhiễu (Median filter)
+    label_image_2d = median_filter(label_image_2d, size=5)
+    
+    # 5. Xác định cụm Tumor (F1-score cao nhất) và ép về nhãn cluster_num (Màu đỏ)
+    best_f1 = 0
+    best_label = 0
+    for i in range(1, cluster_num + 1):
+        temp_pred = (label_image_2d.flatten() == i).astype(int)
+        # true_mask ở đây là mask gốc của toàn bộ ảnh
+        temp_f1 = f1_score(true_mask, temp_pred, zero_division=0)
+        if temp_f1 > best_f1:
+            best_f1 = temp_f1
+            best_label = i
+
+    if best_label != cluster_num and best_label != 0:
+        temp = label_image_2d.copy()
+        label_image_2d[temp == best_label] = cluster_num
+        label_image_2d[temp == cluster_num] = best_label
+
+    # 6. Tô màu
+    colored_img = np.zeros((H, W, 3), dtype=np.uint8)
+    for lbl, color in color_map.items():
+        colored_img[label_image_2d == lbl] = color
+        
+    return colored_img
+
+# =======================================
+# 12. HIỂN THỊ KẾT QUẢ TRÊN HÀNG NGANG
+# =======================================
+
+# Danh sách kết quả các thuật toán
+results = [
+    {"name": "FCM", "U": fu, "V": fv},
+    {"name": "SSFCM", "U": su, "V": sv},
+    {"name": "PSO-FCM", "U": pu, "V": pv},
+    {"name": "SSPSO", "U": psu, "V": psv}
+]
+
+plt.figure(figsize=(20, 5))
+
+# In thêm ảnh gốc để đối chiếu (tùy chọn)
+plt.subplot(1, len(results) + 1, 1)
+plt.imshow(img_raw, cmap='gray')
+plt.title("Ảnh gốc")
+plt.axis('off')
+
+# Vòng lặp in kết quả segmentation
+for i, res in enumerate(results):
+    img_colored = get_colored_image(
+        res["U"], res["V"], valid_mask, H, W, 
+        true_mask, cluster_num, color_map
+    )
+    
+    plt.subplot(1, len(results) + 1, i + 2)
+    plt.imshow(img_colored)
+    plt.title(res["name"])
+    plt.axis('off')
+
+plt.tight_layout()
+plt.show()
         

@@ -91,10 +91,8 @@ def dunn(X: np.ndarray, labels: np.ndarray) -> float:
  
     if c < 2:
         return 0.0
- 
     # Tách data theo cluster
     clusters = [X[labels == label] for label in unique_labels]
- 
     # Max intra-cluster diameter (khoảng cách xa nhất trong mỗi cluster)
     max_intra = 0.0
     for cluster in clusters:
@@ -105,7 +103,6 @@ def dunn(X: np.ndarray, labels: np.ndarray) -> float:
         d = np.max(intra_dists)
         if d > max_intra:
             max_intra = d
- 
     if max_intra == 0.0:
         return 0.0
  
@@ -120,56 +117,10 @@ def dunn(X: np.ndarray, labels: np.ndarray) -> float:
                 min_inter = d
  
     return min_inter / max_intra
-    # =============================================
-    # from scipy.spatial.distance import cdist, pdist, squareform
-    # distances = pdist(data)
-    # dist_matrix = squareform(distances)
-
-    # labels_unique = np.unique(labels)
-    # n_clusters = len(labels_unique)
-
-    # min_inter_cluster_distance = np.inf
-    # max_intra_cluster_distance = 0
-
-    # for k in range(n_clusters):
-    #     cluster_k = data[labels == k]
-
-    #     # Tính khoảng cách lớn nhất trong cụm
-    #     if len(cluster_k) > 1:
-    #         max_intra_cluster_distance = max(
-    #             max_intra_cluster_distance,
-    #             np.max(pdist(cluster_k))
-    #         )
-
-    #     # Tính khoảng cách nhỏ nhất giữa các cụm
-    #     for l in range(k + 1, n_clusters):
-    #         cluster_l = data[labels == l]
-    #         min_dist = np.min(cdist(cluster_k, cluster_l).flatten())
-    #         min_inter_cluster_distance = min(min_inter_cluster_distance, min_dist)
-
-    # if max_intra_cluster_distance == 0:
-    #     return np.inf
-    # return min_inter_cluster_distance / max_intra_cluster_distance
 
 
 # DB -
 def davies_bouldin(data: np.ndarray, labels: np.ndarray) -> float:
-    # C = len(np.unique(labels))
-    # cluster_centers = np.array([data[labels == i].mean(axis=0) for i in range(C)])
-
-    # # Tính độ lệch chuẩn cho mỗi cụm
-    # # dispersions = np.zeros(n_clusters)
-    # dispersions = [np.mean(norm_distances(data[labels == i], cluster_centers[i], axis=1)) for i in range(C)]
-
-    # result = 0
-    # for i in range(C):
-    #     max_ratio = 0
-    #     for j in range(C):
-    #         if i != j:
-    #             ratio = (dispersions[i] + dispersions[j]) / norm_distances(cluster_centers[i], cluster_centers[j])
-    #             max_ratio = max(max_ratio, ratio)
-    #     result += max_ratio
-    # return result / C
     from sklearn.metrics import davies_bouldin_score
     return davies_bouldin_score(data, labels)
 
@@ -341,6 +292,141 @@ def cs(data: np.ndarray, membership: np.ndarray, centroids: np.ndarray, m: float
                               for j in range(i+1, C)])
     return numerator / (N * min_center_dist)
 
-
+# Dice +
+def dice_score(y_true: np.ndarray, y_pred: np.ndarray, average: str = 'macro') -> float:
+    """
+    Tính chỉ số Dice (Sørensen–Dice coefficient) cho bài toán phân cụm.
+    
+    Dice = 2*|A ∩ B| / (|A| + |B|) = 2*TP / (2*TP + FP + FN)
+    
+    Parameters
+    ----------
+    y_true: nhãn thực tế
+    y_pred: nhãn dự đoán từ thuật toán phân cụm (sẽ được align tự động)
+    average: 'macro' | 'weighted' | 'binary'
+        - 'macro': trung bình cộng Dice của các lớp (không trọng số)
+        - 'weighted': trung bình có trọng số theo số lượng mẫu mỗi lớp
+        - 'binary': chỉ tính cho lớp dương (lớp 1)
+    
+    Return
+    ------
+    Giá trị Dice trong [0, 1], càng cao càng tốt
+    """
+    y_true = np.asarray(y_true).astype(np.int64).flatten()
+    y_pred = align_labels(y_true, np.asarray(y_pred))
+    
+    classes = np.unique(y_true)
+    dice_per_class = []
+    weights = []
+    
+    for c in classes:
+        true_c = (y_true == c)
+        pred_c = (y_pred == c)
+        
+        tp = np.sum(true_c & pred_c)
+        fp = np.sum(~true_c & pred_c)
+        fn = np.sum(true_c & ~pred_c)
+        
+        denom = 2 * tp + fp + fn
+        dice_c = (2 * tp) / denom if denom > 0 else 0.0
+        
+        dice_per_class.append(dice_c)
+        weights.append(np.sum(true_c))
+    
+    dice_per_class = np.array(dice_per_class)
+    weights = np.array(weights, dtype=float)
+    
+    if average == 'binary':
+        # Giả định lớp dương là lớp có giá trị lớn nhất (thường là 1)
+        return dice_per_class[-1]
+    elif average == 'weighted':
+        return np.sum(dice_per_class * weights) / np.sum(weights)
+    else:  # macro
+        return np.mean(dice_per_class)
+ 
+ 
+# Jaccard +
+def jaccard_score(y_true: np.ndarray, y_pred: np.ndarray, average: str = 'macro') -> float:
+    """
+    Tính chỉ số Jaccard (Intersection over Union - IoU) cho bài toán phân cụm.
+    
+    Jaccard = |A ∩ B| / |A ∪ B| = TP / (TP + FP + FN)
+    
+    Quan hệ với Dice: Jaccard = Dice / (2 - Dice)
+    
+    Parameters
+    ----------
+    y_true: nhãn thực tế
+    y_pred: nhãn dự đoán từ thuật toán phân cụm (sẽ được align tự động)
+    average: 'macro' | 'weighted' | 'binary'
+    
+    Return
+    ------
+    Giá trị Jaccard trong [0, 1], càng cao càng tốt
+    """
+    y_true = np.asarray(y_true).astype(np.int64).flatten()
+    y_pred = align_labels(y_true, np.asarray(y_pred))
+    
+    classes = np.unique(y_true)
+    jac_per_class = []
+    weights = []
+    
+    for c in classes:
+        true_c = (y_true == c)
+        pred_c = (y_pred == c)
+        
+        tp = np.sum(true_c & pred_c)
+        fp = np.sum(~true_c & pred_c)
+        fn = np.sum(true_c & ~pred_c)
+        
+        denom = tp + fp + fn
+        jac_c = tp / denom if denom > 0 else 0.0
+        
+        jac_per_class.append(jac_c)
+        weights.append(np.sum(true_c))
+    
+    jac_per_class = np.array(jac_per_class)
+    weights = np.array(weights, dtype=float)
+    
+    if average == 'binary':
+        return jac_per_class[-1]
+    elif average == 'weighted':
+        return np.sum(jac_per_class * weights) / np.sum(weights)
+    else:  # macro
+        return np.mean(jac_per_class)
+ 
+ 
+# Kappa +
+def kappa_score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """
+    Tính chỉ số Cohen's Kappa cho bài toán phân cụm.
+    
+    Kappa = (p_o - p_e) / (1 - p_e)
+        - p_o: độ chính xác quan sát được (observed agreement)
+        - p_e: độ chính xác kỳ vọng ngẫu nhiên (expected agreement)
+    
+    Ý nghĩa giá trị:
+        < 0    : tệ hơn ngẫu nhiên
+        0-0.2  : rất yếu
+        0.2-0.4: yếu
+        0.4-0.6: trung bình
+        0.6-0.8: tốt
+        0.8-1.0: rất tốt
+    
+    Parameters
+    ----------
+    y_true: nhãn thực tế
+    y_pred: nhãn dự đoán từ thuật toán phân cụm (sẽ được align tự động)
+    
+    Return
+    ------
+    Giá trị Kappa trong [-1, 1], càng cao càng tốt
+    """
+    from sklearn.metrics import cohen_kappa_score
+    
+    y_true = np.asarray(y_true).astype(np.int64).flatten()
+    y_pred = align_labels(y_true, np.asarray(y_pred))
+    
+    return cohen_kappa_score(y_true, y_pred)
 
 
